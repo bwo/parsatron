@@ -11,19 +11,22 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; position
 
-(defprotocol ShowableError
-  (show-error [this]))
+(defprotocol ParseError
+  (show-error [this])
+  (merge-errors [this other]))
 
 (defprotocol Position
   (increment-position [self item])
   (show-pos [self])
   (error-at [self msgs]))
 
-(defrecord ParseError [pos msgs]
-  ShowableError
+(defrecord LineColParseError [pos msgs]
+  ParseError
   (show-error [_] (str (str/join ", " msgs)
                        " at "
-                       (show-pos pos))))
+                       (show-pos pos)))
+  (merge-errors [this other]
+    (LineColParseError. pos (mapcat :msgs this other))))
 
 (defrecord LineColPos [line column]
   Position
@@ -32,23 +35,20 @@
       (LineColPos. (inc line) 1)
       (LineColPos. line (inc column))))
   (show-pos [_] (str "line: " line " column: " column))
-  (error-at [this msg] (ParseError. this [msg])))
+  (error-at [this msg] (LineColParseError. this [msg])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; errors
 
 
 (defn unknown-error [{:keys [pos] :as state}]
-  (error-at pos ["Error"]))
+  (error-at pos "Error"))
 
 (defn unexpect-error [msg pos]
-  (error-at pos [(str "Unexpected " msg)]))
+  (error-at pos (str "Unexpected " msg)))
 
 (defn expect-error [msg pos]
-  (error-at pos [(str "Expected " msg)]))
-
-(defn merge-errors [err other-err]
-  (ParseError. (:pos err) (mapcat :errs [err other-err])))
+  (error-at pos (str "Expected " msg)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; trampoline
