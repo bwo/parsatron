@@ -3,46 +3,52 @@
   (:require [clojure.string :as str]))
 
 (defrecord InputState [input pos])
-(defrecord SourcePos [line column])
 
 (defrecord Continue [fn])
 (defrecord Ok [item])
-(defrecord Err [errmsg])
+(defrecord Err [errors])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; position
-(defn inc-sourcepos
-  "Increment the source position by a single character, c. On newline,
-   increments the SourcePos's line number and resets the column, on
-   all other characters, increments the column"
-  [{:keys [line column]} c]
-  (if (= c \newline)
-    (SourcePos. (inc line) 1)
-    (SourcePos. line (inc column))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; errors
 (defprotocol ShowableError
   (show-error [this]))
+
+(defprotocol Position
+  (increment-position [self item])
+  (show-pos [self])
+  (error-at [self msgs]))
 
 (defrecord ParseError [pos msgs]
   ShowableError
   (show-error [_] (str (str/join ", " msgs)
-                       " at"
-                       " line: " (:line pos)
-                       " column: " (:column pos))))
+                       " at "
+                       (show-pos pos))))
+
+(defrecord LineColPos [line column]
+  Position
+  (increment-position [_ item]
+    (if (= item \newline)
+      (LineColPos. (inc line) 1)
+      (LineColPos. line (inc column))))
+  (show-pos [_] (str "line: " line " column: " column))
+  (error-at [this msg] (ParseError. this [msg])))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; errors
+
 
 (defn unknown-error [{:keys [pos] :as state}]
-  (ParseError. pos ["Error"]))
+  (error-at pos ["Error"]))
 
 (defn unexpect-error [msg pos]
-  (ParseError. pos [(str "Unexpected " msg)]))
+  (error-at pos [(str "Unexpected " msg)]))
 
 (defn expect-error [msg pos]
-  (ParseError. pos [(str "Expected " msg)]))
+  (error-at pos [(str "Expected " msg)]))
 
-(defn merge-errors [{:keys [pos] :as err} other-err]
-  (ParseError. pos (flatten (concat (:msgs err) (:msgs other-err)))))
+(defn merge-errors [err other-err]
+  (ParseError. (:pos err) (mapcat :errs [err other-err])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; trampoline
@@ -152,7 +158,7 @@
   (fn [{:keys [input pos] :as state} cok cerr eok eerr]
     (if-let [tok (first input)]
       (if (consume? tok)
-        (cok tok (InputState. (rest input) (inc-sourcepos pos tok)))
+        (cok tok (InputState. (rest input) (increment-position pos tok)))
         (eerr (unexpect-error (str "token '" tok "'") pos)))
       (eerr (unexpect-error "end of input" pos)))))
 
@@ -259,19 +265,19 @@
                     (fn cok [item _]
                       (Ok. item))
                     (fn cerr [err]
-                      (Err. (show-error err)))
+                      (Err. err))
                     (fn eok [item _]
                       (Ok. item))
                     (fn eerr [err]
-                      (Err. (show-error err)))))
+                      (Err. err))))
 
 (defn run
   "Run a parser p over some input. The input can be a string or a seq
    of tokens, if the parser produces an error, its message is wrapped
    in a RuntimeException and thrown, and if the parser succeeds, its
    value is returned"
-  [p input]
-  (let [result (run-parser p (InputState. input (SourcePos. 1 1)))]
+  [postype p input]
+  (let [result (run-parser p (InputState. input (postype 1 1)))]
     (condp instance? result
       Ok (:item result)
-      Err (throw (RuntimeException. (:errmsg result))))))
+      Err (throw (RuntimeException. (show-error (:errors result)))))))
