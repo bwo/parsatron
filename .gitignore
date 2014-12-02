@@ -1,5 +1,10 @@
+/target
+/classes
+/checkouts
 pom.xml
-*jar
-lib
-classes
-.lein*
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+/.nrepl-port
+test/resources/parsatron_test.js

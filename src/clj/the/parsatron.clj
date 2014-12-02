@@ -70,6 +70,21 @@
     (f value)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; host environment
+(defn fail [message]
+  (RuntimeException. message))
+
+(defn digit?
+  "Tests if a character is a digit: [0-9]"
+  [c]
+  (Character/isDigit ^Character c))
+
+(defn letter?
+  "Tests if a character is a letter: [a-zA-Z]"
+  [c]
+  (Character/isLetter ^Character c))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; m
 (defn always
   "A parser that always succeeds with the value given and consumes no
@@ -149,6 +164,29 @@
     (Continue. #(p state cok eerr eok eerr))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; interacting with the parser's state
+
+(defn extract
+  "Extract information from the Parser's current state. f should be a
+   fn of one argument, the parser's current state, and any value that
+   it deems worthy of returning will be returned by the entire parser.
+   No input is consumed by this parser, and the state itself is not
+   altered."
+  [f]
+  (fn [state _ _ eok _]
+    (eok (f state) state)))
+
+(defn examine
+  "Return the Parser's current state"
+  []
+  (extract identity))
+
+(defn lineno
+  "A parser that returns the current line number. It consumes no input"
+  []
+  (extract (comp :line :pos)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; token
 (defn token
   "Consume a single item from the head of the input if (consume? item)
@@ -156,10 +194,10 @@
    test returns nil or if the input is empty"
   [consume?]
   (fn [{:keys [input pos] :as state} cok cerr eok eerr]
-    (if (not (empty? input))
+    (if-not (empty? input)
       (let [tok (first input)]
         (if (consume? tok)
-          (cok tok (InputState. (rest input) (increment-position pos tok)))
+          (cok tok (InputState. (rest input) (inc-sourcepos pos tok)))
           (eerr (unexpect-error (str "token '" tok "'") pos))))
       (eerr (unexpect-error "end of input" pos)))))
 
@@ -169,7 +207,7 @@
    that would cause the parser to loop forever"
   [p]
   (letfn [(many-err [_ _]
-            (throw (RuntimeException. "Combinator '*' is applied to a parser that accepts an empty string")))
+            (fail "Combinator '*' is applied to a parser that accepts an empty string"))
           (safe-p [state cok cerr eok eerr]
             (Continue. #(p state cok cerr many-err eerr)))]
     (either
@@ -183,15 +221,9 @@
   [n p]
   (if (= n 0)
     (always [])
-    (fn [state cok cerr eok eerr]
-      (letfn [(pcok [item state]
-                (let [q (times (dec n) p)]
-                  (letfn [(qcok [items state]
-                            (cok (cons item items) state))]
-                    (Continue. #(q state qcok cerr qcok eerr)))))
-              (peok [item state]
-                (eok (repeat n item) state))]
-        (Continue. #(p state pcok cerr peok eerr))))))
+    (let->> [x p
+             xs (times (dec n) p)]
+      (always (cons x xs)))))
 
 (defn lookahead
   "A parser that upon success consumes no input, but returns what was
@@ -229,17 +261,23 @@
 (defn any-char
   "Consume any character"
   []
-  (token #(char? %)))
+  (token char?))
 
 (defn digit
   "Consume a digit [0-9] character"
   []
-  (token #(Character/isDigit %)))
+  (token digit?))
 
 (defn letter
   "Consume a letter [a-zA-Z] character"
   []
-  (token #(Character/isLetter %)))
+  (token letter?))
+
+(defn string
+  "Consume the given string"
+  [s]
+  (reduce nxt (concat (map char s)
+                      (list (always s)))))
 
 (defn between
   "Parse p after parsing open and before parsing close, returning the
@@ -281,4 +319,4 @@
   (let [result (run-parser p (InputState. input (postype 1 1)))]
     (condp instance? result
       Ok (:item result)
-      Err (throw (RuntimeException. (show-error (:errors result)))))))
+      Err (throw (fail ^String (:errmsg result))))))
